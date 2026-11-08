@@ -1,0 +1,120 @@
+/* Colores de la app: --p verde principal, --pl verde claro, --a ámbar, --t texto, --g gris, --b bordes. */
+:root{--p:#00695c;--pl:#e0f2f1;--a:#ffb300;--t:#1d2b29;--g:#6b7a78;--b:#dfe7e6}
+/* Reglas generales: tamaño de cajas, página a pantalla completa y tipografía. */
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--t)}
+/* Botones y campos heredan tipografía y color; el foco con teclado se ve con borde ámbar. */
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:3px solid var(--a);outline-offset:2px}
+
+/* Barra superior flotante (logo, buscador y filtros). */
+.barra{position:absolute;z-index:1000;top:10px;left:10px;right:10px;max-width:460px}
+.marca{display:flex;align-items:center;gap:8px;background:#fff;border-radius:28px;padding:8px 14px;box-shadow:0 2px 10px #0003}
+.logo{display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:var(--p);font-size:16px}
+/* Botones de filtro por tipo de transporte (se desplazan hacia los lados). */
+.chips{display:flex;gap:6px;margin-top:8px;overflow-x:auto;padding-bottom:4px}
+.chip{flex:none;padding:6px 12px;border:0;border-radius:16px;background:#fff;box-shadow:0 1px 5px #0003;font-size:.85rem}
+.chip.on{background:var(--p);color:#fff}
+
+/* Panel inferior con las pestañas; ocupa como máximo el 44% de la altura. */
+.hoja{position:absolute;z-index:1000;left:0;right:0;bottom:0;max-width:520px;max-height:44vh;display:flex;flex-direction:column;background:#fff;border-radius:18px 18px 0 0;box-shadow:0 -3px 14px #0003}
+/* Pestañas: la activa (.on) se marca con borde verde. */
+.tabs{display:flex;border-bottom:1px solid var(--b)}
+.tab{flex:1;padding:12px 4px;background:none;border:0;border-bottom:3px solid transparent;color:var(--g);font-weight:600}
+.tab.on{color:var(--p);border-color:var(--p)}
+/* Contenido de cada pestaña, con scroll propio; se oculta con [hidden]. */
+.panel{overflow-y:auto;padding:10px 12px 16px}
+.panel[hidden],#lista[hidden],#detalle[hidden]{display:none}
+
+/* Lista de rutas: cada fila lleva insignia de color, nombre y descripción. */
+.ruta{display:flex;align-items:center;gap:10px;width:100%;padding:9px 6px;background:none;border:0;border-bottom:1px solid var(--b);text-align:left}
+.badge{flex:none;min-width:42px;padding:6px 4px;border-radius:10px;color:#fff;font-weight:700;text-align:center}
+.txt{flex:1;min-width:0}.txt b{display:block;font-size:.92rem}
+.txt small{display:block;color:var(--g);font-size:.8rem}
+/* Estilo del precio (la lista ya no lo muestra, queda disponible). */
+.precio{font-weight:700;color:var(--p);font-size:.9rem}
+
+/* Detalle de una ruta: botón volver, títulos, paradas y etiquetas. */
+.atras{background:none;border:0;color:var(--p);font-weight:600;padding:4px 0}
+#detalle h2,.panel h2{font-size:1rem;margin:10px 0 6px}
+#detalle ol{margin:6px 0 10px;padding-left:22px;font-size:.9rem;line-height:1.6}
+.dato{display:inline-block;margin:2px 6px 2px 0;padding:4px 10px;border-radius:12px;background:var(--pl);color:var(--p);font-size:.85rem;font-weight:600}
+/* Textos pequeños en gris para avisos y notas. */
+.aviso,.nota{font-size:.78rem;color:var(--g);margin:8px 0 0}
+/* Botón principal verde (Buscar, Publicar opinión) y botón secundario (.sec). */
+.primario{width:100%;padding:10px;border:0;border-radius:12px;background:var(--p);color:#fff;font-weight:600}
+.sec{margin-top:8px;background:var(--pl);color:var(--p);border:0;border-radius:12px;padding:8px 12px;font-weight:600}
+
+/* Tablas de tarifas: concepto a la izquierda y monto en verde a la derecha. */
+table{width:100%;border-collapse:collapse;font-size:.9rem}
+td{padding:7px 4px;border-bottom:1px solid var(--b)}td+td{text-align:right;font-weight:700;color:var(--p)}
+
+/* Formulario de opiniones: campos, estrellas (.on = amarilla) y lista de opiniones. */
+#p-opiniones label{display:block;font-size:.85rem;color:var(--g)}
+select,input,textarea{width:100%;margin:6px 0;padding:9px 10px;border:1px solid var(--b);border-radius:10px;background:#fff}
+.estrellas button{background:none;border:0;font-size:1.7rem;color:#c9d3d1;padding:0 3px}
+.estrellas button.on{color:var(--a)}
+.op{padding:10px 0;border-bottom:1px solid var(--b);font-size:.9rem}
+.op b{margin-right:6px}.op small{color:var(--g)}.op .e{color:var(--a)}
+.media{font-weight:700;margin:12px 0 2px}
+
+/* Punto blanco con borde de color que marca cada parada en el mapa (el color llega con --c). */
+.parada{width:12px;height:12px;border-radius:50%;background:#fff;border:3px solid var(--c)}
+
+/* Buscador: cuadro redondeado y botón Buscar. */
+.buscar{position:relative;display:flex;gap:6px;margin-top:8px}
+.buscar input{flex:1;min-width:0;margin:0;border:0;border-radius:24px;padding:11px 16px;box-shadow:0 2px 10px #0003}
+.buscar .primario{width:auto;padding:0 16px;border-radius:24px}
+/* Lista desplegable de sugerencias bajo el buscador. */
+#sug{position:absolute;top:calc(100% + 6px);left:0;right:0;margin:0;padding:4px 0;list-style:none;max-height:240px;overflow-y:auto;background:#fff;border-radius:14px;box-shadow:0 4px 14px #0004}
+#sug[hidden]{display:none}
+#sug button,.fav button.ir{display:block;width:100%;padding:9px 14px;background:none;border:0;text-align:left}
+#sug button:hover{background:var(--pl)}
+#sug b,.fav b{display:block;font-size:.9rem}#sug span,.fav span{display:block;font-size:.78rem;color:var(--g)}
+/* Mensaje cuando no hay resultados. */
+.vacio{padding:10px 14px;font-size:.85rem;color:var(--g)}
+/* Punto negro que marca el lugar buscado en el mapa. */
+.pin{width:22px;height:22px;border-radius:50%;background:var(--t);border:4px solid #fff;box-shadow:0 1px 6px #0007}
+/* Estrella amarilla que marca cada favorito en el mapa. */
+.favm{display:grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--a);color:#fff;font-size:13px;border:2px solid #fff;box-shadow:0 1px 5px #0006}
+/* Tarjeta del lugar buscado; .est es el botón de estrella para guardarlo y .x el de cerrar o quitar. */
+.lugar{display:flex;align-items:center;gap:6px;padding:8px 10px;background:var(--pl);border-radius:18px 18px 0 0}
+.lugar[hidden]{display:none}
+.li{flex:1;min-width:0}.li b{display:block;font-size:.92rem}.li small{display:block;font-size:.78rem;color:var(--g)}
+.est{flex:none;padding:7px 10px;border:2px solid var(--b);border-radius:10px;background:#fff;font-size:.8rem;font-weight:600}
+.est.on{border-color:var(--a);background:#fff8e1}
+.x{flex:none;background:none;border:0;color:var(--g);font-size:1rem;padding:6px}
+/* Fila de la lista de favoritos. */
+.fav{display:flex;align-items:center;border-bottom:1px solid var(--b)}.fav .ir{flex:1;min-width:0}
+.fav .x:hover{color:#c62828}
+
+/* Animación del panel: al ocultarlo baja y solo queda visible la barrita (.asa). */
+.hoja{transition:transform .25s ease}
+.hoja.oculta{transform:translateY(calc(100% - 44px))}
+.asa{display:flex;flex-direction:column;align-items:center;gap:2px;width:100%;padding:8px 0 2px;background:none;border:0;font-size:.72rem;color:var(--g);flex:none}
+.asa i{width:44px;height:5px;border-radius:3px;background:#b8c4c2}
+/* Tarjeta con distancia, número de paradas y modo (como en Trufi). */
+.stats{display:flex;margin:10px 0 4px;border:1px solid var(--b);border-radius:14px;background:var(--pl)}
+.stats div{flex:1;padding:10px 4px;text-align:center}
+.stats b{display:block;font-size:1rem}.stats small{color:var(--g);font-size:.75rem}
+/* Si el usuario prefiere menos animaciones, se quita la del panel. */
+@media (prefers-reduced-motion:reduce){.hoja{transition:none}}
+
+/* Botones de la barra superior: Mi ubicación (GPS) y cambio de tema. */
+.marca #gps{margin-left:auto}
+.ico{border:0;border-radius:16px;background:var(--pl);padding:6px 10px;font-size:.8rem}
+/* Modo oscuro: se invierten los colores del mapa y se oscurecen el panel y los campos. */
+.oscuro{--pl:#24413d;--t:#e8f0ef;--g:#9db0ad;--b:#34504c;--p:#26a69a}
+.oscuro .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.9) contrast(.9)}
+.oscuro .marca,.oscuro .chip,.oscuro .hoja,.oscuro #sug,.oscuro .est,.oscuro select,.oscuro input,.oscuro textarea{background:#1c2624;color:var(--t)}
+.oscuro .lugar{background:#24413d}
+.oscuro .chip.on,.oscuro .primario{background:var(--p);color:#10201e}
+
+/* Tarjeta del viaje: cada dato lleva su icono arriba (regla, reloj, caminata, tráfico). */
+.viaje{margin-bottom:10px;padding:10px;border:1px solid var(--b);border-radius:14px;background:#fff}
+.viaje[hidden]{display:none}
+.ic{display:block;font-size:1.3rem;margin-bottom:2px}
+.viaje .stats{margin:8px 0}
+.pasos{margin:6px 0;padding-left:20px;font-size:.88rem;line-height:1.6}
+.oscuro .viaje{background:#1c2624}

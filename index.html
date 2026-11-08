@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Datos para instalar la app en el celular (PWA) -->
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#00695c" />
+  <title>CochaRuta · Transporte público de Cochabamba</title>
+  <!-- Estilos de Leaflet, la librería del mapa. -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+  <!-- Estilos propios de CochaRuta. -->
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Contenedor del mapa: ocupa toda la pantalla y script.js lo llena con Leaflet. -->
+  <div id="map" style="position:absolute;inset:0"></div>
+
+  <!-- Barra superior flotante: logo, buscador de lugares y filtros por tipo de transporte. -->
+  <header class="barra">
+    <div class="marca"><span class="logo">🚌</span><b>CochaRuta</b><button id="gps" class="ico">📍 Mi ubicación</button><button id="tema" class="ico" aria-label="Cambiar entre modo claro y oscuro">🌙</button></div>
+    <!-- Buscador: cuadro de texto, botón Buscar y lista de sugerencias (la llena script.js). -->
+    <div class="buscar">
+      <input id="q" type="search" placeholder="¿A dónde vas? Busca un lugar" autocomplete="off" enterkeyhint="search" aria-label="Buscar un lugar" />
+      <button id="q-ir" class="primario">Buscar</button>
+      <ul id="sug" hidden></ul>
+    </div>
+    <!-- Botones de filtro (Todos, Micro, Trufi...) que crea script.js. -->
+    <div class="chips" id="chips"></div>
+  </header>
+
+  <!-- Panel inferior con pestañas; se oculta y se muestra con la barrita de arriba. -->
+  <section class="hoja">
+    <!-- Barrita para ocultar o mostrar el panel. -->
+    <button id="asa" class="asa" aria-expanded="true" aria-label="Mostrar u ocultar el panel de rutas"><i></i><span id="asa-t">Ocultar</span></button>
+    <!-- Tarjeta del lugar buscado: nombre, ruta más cercana y botón de favorito. -->
+    <div id="lugar" class="lugar" hidden></div>
+    <!-- Pestañas del panel. -->
+    <nav class="tabs" role="tablist">
+      <button class="tab on" data-tab="rutas">Rutas</button>
+      <button class="tab" data-tab="tarifas">Tarifas</button>
+      <button class="tab" data-tab="opiniones">Opiniones</button>
+      <button class="tab" data-tab="favoritos">★ Favoritos</button>
+    </nav>
+
+    <!-- Pestaña Rutas: lista de rutas y, al elegir una, su detalle. -->
+    <div id="p-rutas" class="panel">
+      <!-- Tarjeta del viaje: distancia, tiempo, caminata, tráfico y pasos (la arma script.js) -->
+      <div id="viaje" class="viaje" hidden></div>
+      <div id="lista"></div>
+      <div id="detalle" hidden></div>
+    </div>
+
+    <!-- Pestaña Tarifas: script.js carga las tablas desde el servidor. -->
+    <div id="p-tarifas" class="panel" hidden>
+      <div id="tarifas-lista"></div>
+      <p class="nota">El pasaje urbano de Bs 3 es un acuerdo provisional (dic. 2025) y la Alcaldía estudia si lo ajusta. A municipios vecinos puede cobrarse más. Confirma con el chofer.</p>
+    </div>
+
+    <!-- Pestaña Opiniones: formulario (ruta, estrellas, nombre y texto) y lista de opiniones. -->
+    <div id="p-opiniones" class="panel" hidden>
+      <p id="nota-local" class="nota" hidden>Las opiniones y favoritos se guardan solo en este dispositivo.</p>
+      <label>Ruta <select id="op-ruta"></select></label>
+      <div class="estrellas" id="estrellas" aria-label="Calificación"></div>
+      <input id="op-nombre" placeholder="Tu nombre (opcional)" maxlength="30" />
+      <textarea id="op-texto" placeholder="¿Cómo fue tu viaje?" maxlength="300" rows="2"></textarea>
+      <button id="op-enviar" class="primario">Publicar opinión</button>
+      <div id="op-lista"></div>
+    </div>
+
+    <!-- Pestaña Favoritos: lista de lugares guardados. -->
+    <div id="p-favoritos" class="panel" hidden></div>
+  </section>
+
+  <!-- Librería Leaflet; debe cargar antes que script.js. -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+  <!-- Lógica de la aplicación. -->
+  <script src="script.js"></script>
+</body>
+</html>
