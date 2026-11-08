@@ -379,17 +379,29 @@ function masCercana(ll) {
   return m;
 }
 
+// Al tocar el marcador de "Mi ubicación" muestra una ventanita con la opción de guardarla en favoritos.
+function ofrecerGuardar(i, ll) {
+  const caja = nodo("div"), t = nodo("b"), b = nodo("button", "primario"), ya = posFav(i) >= 0;
+  t.textContent = i.titulo;
+  b.textContent = ya ? "★ Ya está en favoritos" : "☆ Guardar en favoritos";
+  b.disabled = ya;
+  b.addEventListener("click", () => { mapa.closePopup(); alternar(i); });
+  caja.append(t, document.createElement("br"), b);
+  L.popup({ offset: [0, -8] }).setLatLng(ll).setContent(caja).openOn(mapa);
+}
+
 // Va a un lugar: marca el punto en el mapa, muestra su tarjeta (distancia y botón de favorito) y dibuja la ruta más cercana.
-function ir(i, sinPlan) {
+function ir(i, soloUbicacion) {
   lugar = i;
   clearTimeout(espera);
   if (ctl) ctl.abort();
-  $("#q").value = i.titulo; $("#sug").hidden = true; $("#q").blur();
+  $("#q").value = soloUbicacion ? "" : i.titulo; $("#sug").hidden = true; $("#q").blur();
   // ll = posición del lugar; m = ruta más cercana y su distancia.
-  const ll = L.latLng(i.lat, i.lng), m = masCercana(ll);
+  const ll = L.latLng(i.lat, i.lng), m = soloUbicacion ? null : masCercana(ll);
   capaLugar.clearLayers();
   L.marker(ll, { icon: L.divIcon({ className: "", html: '<div class="pin"></div>', iconSize: [22, 22], iconAnchor: [11, 11] }), zIndexOffset: 2000 })
-    .bindTooltip(i.titulo, { permanent: true, direction: "top", offset: [0, -10] }).addTo(capaLugar);
+    .bindTooltip(i.titulo, { permanent: true, direction: "top", offset: [0, -10] }).addTo(capaLugar)
+    .on("click", () => { if (soloUbicacion) ofrecerGuardar(i, ll); });
   // Arma la tarjeta del lugar que aparece sobre las pestañas.
   const c = $("#lugar");
   c.hidden = false;
@@ -397,14 +409,15 @@ function ir(i, sinPlan) {
   $("#l-t").textContent = i.titulo;
   $("#l-d").textContent = i.detalle;
   // Distancia en metros, o en km si pasa de 1000.
-  const dist = m.d >= 1000 ? (m.d / 1000).toFixed(1).replace(".", ",") + " km" : Math.round(m.d) + " m";
-  $("#l-m").textContent = `Más cercana: ${m.r.tipo} ${m.r.id} · a ${dist} (aprox.)`;
+  const dist = !m ? "" : m.d >= 1000 ? (m.d / 1000).toFixed(1).replace(".", ",") + " km" : Math.round(m.d) + " m";
+  $("#l-m").textContent = m ? `Más cercana: ${m.r.tipo} ${m.r.id} · a ${dist} (aprox.)` : "Toca ☆ Guardar para ponerla en favoritos (por ejemplo, Mi casa).";
   $("#estrella").addEventListener("click", () => alternar(i));
-  $("#cerrar").addEventListener("click", () => { lugar = null; c.hidden = true; $("#viaje").hidden = true; capaLugar.clearLayers(); $("#q").value = ""; volver(); });
+  $("#cerrar").addEventListener("click", () => { lugar = null; c.hidden = true; capaLugar.clearLayers(); $("#q").value = ""; volver(); });
   pintarFavs();
   // Cambia a la pestaña Rutas y dibuja la ruta más cercana incluyendo el lugar en el zoom.
   tab("rutas");
-  planear(i, m, sinPlan);
+  if (m) elegir(m.r, i);
+  else { volver(); mapa.setView(ll, 16); }
 }
 
 // ---------- Favoritos ----------
@@ -423,6 +436,12 @@ async function cargarFavoritos() {
 // Guarda el lugar como favorito (POST) o lo quita si ya lo era (DELETE) y recarga la lista.
 async function alternar(i) {
   const k = posFav(i);
+  let datos = i;
+  if (k < 0 && i.gps) {
+    const n = prompt("¿Cómo quieres llamar este lugar?", "Mi casa");
+    if (n === null) return;
+    datos = { ...i, titulo: n.trim() || "Mi ubicación", detalle: "Guardado desde el GPS" };
+  }
   try {
     if (k >= 0) {
       await api(`/api/favorites?id=${favs[k].id}&client_id=${encodeURIComponent(CLIENTE_ID)}`, { method: "DELETE" });
@@ -430,7 +449,7 @@ async function alternar(i) {
       await api("/api/favorites", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ client_id: CLIENTE_ID, titulo: i.titulo, detalle: i.detalle, lat: i.lat, lng: i.lng }),
+        body: JSON.stringify({ client_id: CLIENTE_ID, titulo: datos.titulo, detalle: datos.detalle, lat: datos.lat, lng: datos.lng }),
       });
     }
     await cargarFavoritos();
@@ -471,7 +490,7 @@ void cargarFavoritos().catch((e) => alert("No se pudieron cargar los favoritos: 
 $("#gps").addEventListener("click", () => {
   if (!navigator.geolocation) { alert("Tu navegador no permite usar el GPS."); return; }
   navigator.geolocation.getCurrentPosition(
-    (pos) => { miPos = L.latLng(pos.coords.latitude, pos.coords.longitude); ir({ titulo: "Mi ubicación", detalle: "Detectada por GPS", lat: pos.coords.latitude, lng: pos.coords.longitude }, true); },
+    (pos) => ir({ titulo: "Mi ubicación", detalle: "Detectada por GPS", lat: pos.coords.latitude, lng: pos.coords.longitude, gps: true }, true),
     () => alert("No se pudo obtener tu ubicación. Activa el GPS y da permiso al navegador."),
     { enableHighAccuracy: true, timeout: 10000 }
   );
@@ -491,70 +510,3 @@ oscuro((() => { try { const t = localStorage.getItem("cocharuta-tema"); if (t) r
 // ---------- App instalable (PWA) y uso sin conexión ----------
 // Registra el Service Worker (sw.js), que guarda en caché lo que la app va usando.
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
-
-
-// ---------- Planificador de viaje: de tu ubicación (GPS) al destino elegido ----------
-let miPos = null; // última posición GPS conocida
-
-// Puntos de una ruta: 20 por cada tramo entre paradas (sirve para medir cercanía sin pedir el trazado completo).
-function muestras(r) {
-  const o = [];
-  r.paradas.forEach((a, k) => { const b = r.paradas[k + 1]; if (b) for (let j = 0; j < 20; j++) o.push(L.latLng(a[0] + ((b[0] - a[0]) * j) / 20, a[1] + ((b[1] - a[1]) * j) / 20)); });
-  return o;
-}
-// Punto de la lista más cercano a ll: devuelve su posición (i) y su distancia en metros (d).
-function cercano(pts, ll) {
-  let m = { i: 0, d: Infinity };
-  pts.forEach((p, i) => { const d = ll.distanceTo(p); if (d < m.d) m = { i, d }; });
-  return m;
-}
-// Tráfico ESTIMADO según día y hora (no es en vivo): da la velocidad media del bus en km/h.
-function trafico() {
-  const f = new Date(), h = f.getHours() + f.getMinutes() / 60, d = f.getDay();
-  const pico = d > 0 && d < 6 && ((h >= 7 && h < 9.5) || (h >= 12 && h < 14.5) || (h >= 17 && h < 20));
-  if (pico) return { n: "Alto", v: 11, c: "#c62828" };
-  if (h >= 21 || h < 5.5) return { n: "Bajo", v: 25, c: "#2e7d32" };
-  return { n: "Medio", v: 17, c: "#ef6c00" };
-}
-
-// Calcula el viaje: elige la ruta que deja más cerca del origen y del destino, dibuja los tramos y muestra la tarjeta.
-async function planear(i, m, sinPlan) {
-  $("#viaje").hidden = true;
-  const dest = L.latLng(i.lat, i.lng);
-  let origen = miPos;
-  if (!sinPlan && !origen && navigator.geolocation) {
-    origen = await new Promise((ok) => navigator.geolocation.getCurrentPosition((p) => ok((miPos = L.latLng(p.coords.latitude, p.coords.longitude))), () => ok(null), { timeout: 8000 }));
-  }
-  if (lugar !== i) return;
-  if (sinPlan || !origen) { elegir(m.r, i); return; } // sin GPS: solo la ruta más cercana al lugar
-  // 1) Ruta con menor caminata total (origen -> ruta + ruta -> destino).
-  let r = null, mejor = Infinity;
-  RUTAS.forEach((x) => { const p = muestras(x), t = cercano(p, origen).d + cercano(p, dest).d; if (t < mejor) { mejor = t; r = x; } });
-  await elegir(r, i);
-  // 2) Con el trazado real: caminata + viaje en bus + caminata.
-  const pts = (await trazado(r)).map((p) => L.latLng(p));
-  if (lugar !== i) return;
-  const A = cercano(pts, origen), B = cercano(pts, dest);
-  const seg = pts.slice(Math.min(A.i, B.i), Math.max(A.i, B.i) + 1);
-  const bus = seg.reduce((s, p, k) => s + (k ? seg[k - 1].distanceTo(p) : 0), 0);
-  const camina = A.d + B.d, t = trafico();
-  const min = Math.round((bus / 1000 / t.v) * 60 + camina / 80); // caminando ~80 m/min
-  const km = (n) => (n / 1000).toFixed(1).replace(".", ",") + " km", mt = (n) => Math.round(n) + " m";
-  const llegada = new Date(Date.now() + min * 60000).toLocaleTimeString("es-BO", { hour: "2-digit", minute: "2-digit" });
-  // Dibujo: tu posición, tramos a pie (punteados) y el tramo que recorres en bus (más grueso).
-  L.polyline(seg, { color: r.c, weight: 9, opacity: 0.9 }).addTo(capaLugar);
-  L.polyline([origen, pts[A.i]], { color: "#202124", weight: 3, dashArray: "6 8" }).addTo(capaLugar);
-  L.polyline([pts[B.i], dest], { color: "#202124", weight: 3, dashArray: "6 8" }).addTo(capaLugar);
-  L.circleMarker(origen, { radius: 8, color: "#fff", weight: 3, fillColor: "#1565c0", fillOpacity: 1 }).bindTooltip("Tú estás aquí").addTo(capaLugar);
-  mapa.fitBounds(L.latLngBounds([origen, dest, ...seg]), { paddingTopLeft: [30, 190], paddingBottomRight: [30, Math.round(innerHeight * 0.46)] });
-  // Tarjeta: distancia (regla), tiempo (reloj), caminata y tráfico.
-  const v = $("#viaje");
-  v.innerHTML = '<b>Tu viaje a <span id="v-d"></span></b><div class="stats"></div><ol class="pasos"></ol><p class="aviso"></p><button class="sec" id="v-w">Compartir por WhatsApp</button>';
-  v.querySelector("#v-d").textContent = i.titulo;
-  v.querySelector(".stats").innerHTML = `<div><span class="ic">📏</span><b>${km(bus + camina)}</b><small>Distancia</small></div><div><span class="ic">⏱️</span><b>${min} min</b><small>Tiempo</small></div><div><span class="ic">🚶</span><b>${mt(camina)}</b><small>Caminata</small></div><div><span class="ic">🚦</span><b style="color:${t.c}">${t.n}</b><small>Tráfico</small></div>`;
-  v.querySelector(".pasos").innerHTML = `<li>Camina ${mt(A.d)} hasta la ruta.</li><li>Sube al ${r.tipo} ${r.id} y viaja ${km(bus)}.</li><li>Baja y camina ${mt(B.d)} hasta tu destino.</li>`;
-  v.querySelector(".aviso").textContent = `Llegas a las ${llegada} aprox. Tiempo estimado según la hora del día, no es tráfico en vivo.${camina > 1500 ? " Ninguna ruta te deja cerca: caminarás bastante." : ""}`;
-  v.querySelector("#v-w").addEventListener("click", () => window.open("https://wa.me/?text=" + encodeURIComponent(`Voy a ${i.titulo} en ${r.tipo} ${r.id}: ${km(bus + camina)}, unos ${min} min (llego ~${llegada}). #CochaRuta`)));
-  v.hidden = false;
-  $("#p-rutas").scrollTop = 0;
-}
