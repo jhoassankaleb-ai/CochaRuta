@@ -149,6 +149,7 @@ async function elegir(r, extra, origen) {
   L.polyline(pts, { color: r.c, weight: 5 }).addTo(capa);
   r.paradas.forEach((p) => L.marker([p[0], p[1]], { icon: L.divIcon({ className: "", html: `<div class="parada" style="--c:${r.c}"></div>`, iconSize: [12, 12], iconAnchor: [6, 6] }) }).bindTooltip(p[2] || "Parada").addTo(capa));
   mapa.fitBounds(L.latLngBounds(pts.concat([extra, origen].filter(Boolean).map((e) => [e.lat, e.lng]))), { paddingTopLeft: [30, 190], paddingBottomRight: [30, Math.round(innerHeight * 0.46)] });
+  infoRuta(r);
 }
 
 // ---------- Mostrar / ocultar el panel ----------
@@ -509,13 +510,23 @@ const posicion = () => new Promise((ok) => navigator.geolocation
   ? navigator.geolocation.getCurrentPosition((p) => ok((miPos = L.latLng(p.coords.latitude, p.coords.longitude))), () => ok(miPos), { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 })
   : ok(null));
 
+// Pide un mosaico de prueba a TomTom y, si responde con error, explica qué pasa (la capa no se vería).
+function probarTrafico() {
+  const z = 13, n = 2 ** z, la = -17.3935 * Math.PI / 180;
+  const x = Math.floor((-66.157 + 180) / 360 * n), y = Math.floor((1 - Math.log(Math.tan(la) + 1 / Math.cos(la)) / Math.PI) / 2 * n);
+  fetch(`https://api.tomtom.com/traffic/map/4/tile/flow/relative/${z}/${x}/${y}.png?key=${TOMTOM_KEY}`)
+    .then((res) => { if (!res.ok) alert(`TomTom respondió ${res.status}. ` + (res.status === 403 || res.status === 401 ? "Revisa en developer.tomtom.com que tu clave tenga activada la Traffic API, que no tenga restricción de dominio y que no superaste el límite diario." : "La capa de tráfico no está disponible ahora.")); })
+    .catch(() => { /* sin respuesta legible (por ejemplo, sin internet): no se avisa */ });
+}
 // Botón 🚦: muestra u oculta las capas de tráfico de TomTom sobre el mapa.
 let capaTrafico = null;
+mapa.createPane("trafico").style.zIndex = 250; // capa propia: el modo oscuro no le cambia los colores
 $("#trafico").addEventListener("click", () => {
   if (!TOMTOM_KEY) { alert("Para ver el tráfico en vivo pega tu clave gratuita de TomTom en TOMTOM_KEY, al inicio del bloque “Tiempo de llegada y tráfico” de script.js."); return; }
   if (capaTrafico) { mapa.removeLayer(capaTrafico); capaTrafico = null; $("#trafico").style.opacity = ""; return; }
-  capaTrafico = L.tileLayer(`https://api.tomtom.com/traffic/map/4/tile/flow/relative0/{z}/{x}/{y}.png?key=${TOMTOM_KEY}`, { maxZoom: 19, opacity: 0.85 }).addTo(mapa);
+  capaTrafico = L.tileLayer(`https://api.tomtom.com/traffic/map/4/tile/flow/relative/{z}/{x}/{y}.png?key=${TOMTOM_KEY}`, { maxZoom: 19, opacity: 0.85, pane: "trafico" }).addTo(mapa);
   $("#trafico").style.opacity = "1";
+  probarTrafico();
   $("#trafico").style.outline = "2px solid #00695c";
 });
 
@@ -578,7 +589,7 @@ async function planearViaje(i, ll) {
     <p class="nota">🚶 ${m(p.dO)} hasta la parada · ⏱ espera ~${tr ? tr.espera : 5} min · ${ICONO[p.r.tipo]} ${Math.round(ride)} min en ${p.r.tipo} ${p.r.id} · 🚶 ${m(p.dD)} hasta tu destino</p>
     ${auto ? `<p class="nota">🚗 En auto: ${Math.round(auto.seg / 60)} min · ${m(auto.m)}</p>` : ""}
     ${niv === "Sin datos" ? '<p class="nota">Tiempos estimados sin tráfico en vivo (agrega tu clave de TomTom para activarlo).</p>' : ""}
-    ${tr ? tr.html : ""}${av.html}
+    ${av.html}
     <button class="sec" id="iniciar">▶ Iniciar viaje y avisarme al bajar</button><p id="seguir" class="nota" hidden></p>`);
   $("#iniciar").addEventListener("click", () => seguir(p));
 }
@@ -628,6 +639,9 @@ async function cargarHorarios() {
 }
 // Convierte "HH:MM" a minutos desde la medianoche.
 const aMin = (h) => { const [a, b] = h.split(":"); return +a * 60 + +b; };
+// Minutos desde la medianoche a "HH:MM", y próximo tren (la serie parte de la primera salida cada 'cada' minutos).
+const hhmm = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+const proximo = (h, ahora) => { const a = aMin(h.primero), t = a + Math.max(0, Math.ceil((ahora - a) / h.cada)) * h.cada; return t > aMin(h.ultimo) ? "ya no hay más trenes hoy" : hhmm(t); };
 // Para una ruta de tren devuelve la espera promedio (mitad de la frecuencia) y el texto del horario de hoy; null si no es tren.
 function horarioTren(r) {
   if (r.tipo !== "Tren") return null;
@@ -635,7 +649,7 @@ function horarioTren(r) {
   const h = horarios.find((x) => x.ruta === r.id && x.dia === dia);
   if (!h) return { espera: 5, html: '<p class="nota">Horario del tren aún no confirmado: se usa una espera de 5 min. Verifícalo con Mi Tren.</p>' };
   const ahora = f.getHours() * 60 + f.getMinutes(), fuera = ahora < aMin(h.primero) || ahora > aMin(h.ultimo);
-  return { espera: Math.max(1, Math.round(h.cada / 2)), html: `<p class="nota">🚆 Hoy: ${h.primero}–${h.ultimo}, un tren cada ${h.cada} min.${fuera ? " ⚠ Ahora el tren está fuera de servicio." : ""}</p>` };
+  return { espera: Math.max(1, Math.round(h.cada / 2)), html: `<p class="nota">🚆 Hoy: ${h.primero}–${h.ultimo}, un tren cada ${h.cada} min.${fuera ? " ⚠ Ahora el tren está fuera de servicio." : " Próximo tren: " + proximo(h, ahora) + "."}</p>` };
 }
 
 // ---------- Reportes de la comunidad ----------
@@ -716,6 +730,50 @@ function avisosRuta(r) {
   return { extra, html };
 }
 void cargarReportes();
+
+// ---------- Tráfico por delante en la ruta elegida ----------
+// Distancia legible: metros o km.
+const fmt = (x) => (x >= 1000 ? (x / 1000).toFixed(1).replace(".", ",") + " km" : Math.round(x) + " m");
+// Pide a TomTom el recorrido por las paradas ps con tráfico en vivo; devuelve la ruta, {error: código} o null.
+async function rutaTrafico(ps) {
+  try {
+    const res = await fetch(`https://api.tomtom.com/routing/1/calculateRoute/${ps.map((p) => p[0] + "," + p[1]).join(":")}/json?traffic=true&computeTravelTimeFor=all&key=${TOMTOM_KEY}`);
+    if (!res.ok) return { error: res.status };
+    return (await res.json()).routes[0];
+  } catch (e) { return null; }
+}
+// Bajo el título de la ruta: horario y próximo tren (si es tren) o tráfico por delante + llegada aproximada (demás transportes).
+// "Por delante" = desde la parada más cercana a ti hacia el extremo más lejano de la línea (sin GPS: toda la línea).
+async function infoRuta(r) {
+  const poner = (h) => { const e = $("#tr-ruta"); if (e) e.remove(); const t = $("#detalle h2"); if (t && sel === r) t.insertAdjacentHTML("afterend", `<div id="tr-ruta">${h}</div>`); };
+  if (r.tipo === "Tren") { await cargarHorarios(); poner(horarioTren(r).html); return; }
+  if (!TOMTOM_KEY) { poner('<p class="nota">Pega tu clave de TomTom en script.js para ver el tráfico por delante.</p>'); return; }
+  poner('<p class="nota">Calculando tráfico por delante…</p>');
+  const o = await posicion();
+  if (sel !== r) return;
+  let ps = r.paradas, ya = 0;
+  if (o) {
+    const k = ps.reduce((b, p, j) => (o.distanceTo([p[0], p[1]]) < o.distanceTo([ps[b][0], ps[b][1]]) ? j : b), 0);
+    ps = k <= (ps.length - 1) / 2 ? ps.slice(k) : ps.slice(0, k + 1).reverse();
+    ya = o.distanceTo([ps[0][0], ps[0][1]]);
+    if (ps.length < 2) { ps = r.paradas; ya = 0; }
+  }
+  const d = await rutaTrafico(ps);
+  if (sel !== r) return;
+  if (!d || d.error || !d.summary) { poner(`<p class="nota">No se pudo obtener el tráfico${d && d.error ? " (TomTom respondió " + d.error + (d.error === 403 ? ": revisa que tu clave tenga activada la Routing API o que no superaste el límite diario" : "") + ")" : ". Revisa tu internet"}.</p>`); return; }
+  // Pinta cada tramo entre paradas con el color de su tráfico: verde fluido, amarillo moderado, rojo pesado.
+  d.legs.forEach((g) => {
+    const dl = g.summary.trafficDelayInSeconds || 0, f = 1 + dl / Math.max(g.summary.travelTimeInSeconds - dl, 30);
+    L.polyline(g.points.map((q) => [q.latitude, q.longitude]), { color: f < 1.1 ? "#2e7d32" : f < 1.3 ? "#f9a825" : "#c62828", weight: 5 }).addTo(capa);
+  });
+  const s = d.summary, delay = s.trafficDelayInSeconds || 0, f = 1 + delay / Math.max(s.travelTimeInSeconds - delay, 60);
+  const niv = f < 1.1 ? "Fluido" : f < 1.3 ? "Moderado" : "Pesado";
+  const total = Math.round(ya / 80 + 5 + (s.lengthInMeters / 1000) / (VEL[r.tipo] || 16) * 60 * f);
+  const hora = new Date(Date.now() + total * 60000).toLocaleTimeString("es-BO", { hour: "2-digit", minute: "2-digit" });
+  const sinDatos = s.liveTrafficIncidentsTravelTimeInSeconds !== undefined && s.noTrafficTravelTimeInSeconds === s.liveTrafficIncidentsTravelTimeInSeconds && s.noTrafficTravelTimeInSeconds === s.historicTrafficTravelTimeInSeconds;
+  poner(`<div class="stats"><div><b>${niv}</b><small>Tráfico por delante</small></div><div><b>${total} min</b><small>Hasta el final</small></div><div><b>${hora}</b><small>Llegada aprox.</small></div></div>
+    <p class="nota">${fmt(s.lengthInMeters)} por delante · +${Math.round(delay / 60)} min por tráfico. En el mapa: verde fluido, amarillo moderado, rojo pesado.${o ? ` Incluye ${fmt(ya)} caminando hasta la parada más cercana y 5 min de espera.` : " Activa el GPS para contar desde tu posición."}${sinDatos ? " ⚠ TomTom parece no tener datos de tráfico en esta zona: el tiempo es sin tráfico." : ""}</p>`);
+}
 
 // ---------- Modo oscuro / claro ----------
 // Activa o quita la clase 'oscuro' del body (los estilos están en style.css) y recuerda la elección.
