@@ -4,6 +4,7 @@ import json
 import math
 import mimetypes
 import os
+import socket
 import sqlite3
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -334,6 +335,13 @@ def main():
     initialize_database()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"CochaRuta disponible en http://{args.host}:{args.port}")
+    if args.host == "0.0.0.0":
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect(("8.8.8.8", 80))  # no envía datos: solo averigua qué IP usa tu red
+                print(f"Desde otros dispositivos del mismo Wi-Fi: http://{s.getsockname()[0]}:{args.port}")
+        except OSError:
+            pass
     try:
         server.serve_forever()
     except KeyboardInterrupt:

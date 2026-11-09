@@ -183,12 +183,28 @@ async function api(url, options) {
 // ---------- Modo local (sin servidor) ----------
 // Imita la API de server.py guardando opiniones y favoritos en este navegador, con las mismas respuestas.
 const TARIFAS_BASE = [["urbano", "General", 3], ["urbano", "Adulto mayor / discapacidad", 2.5], ["urbano", "Estudiante", 2], ["urbano", "Escolar", 1], ["tren", "Línea Roja (hasta Kiñiloma)", 3.5], ["tren", "Línea Verde (a Quillacollo)", 4], ["tren", "Preferencial", 2], ["tren", "Estudiantil", 1]];
+// Barra roja (una sola vez) cuando la app no puede hablar con el servidor y guarda solo en este navegador.
+let avisoMostrado = false;
+function avisoLocal() {
+  if (avisoMostrado) return;
+  avisoMostrado = true;
+  const b = nodo("div"), x = nodo("button", "", "✕");
+  b.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:3000;background:#c62828;color:#fff;padding:8px 36px 8px 12px;font-size:.8rem;text-align:center";
+  b.textContent = location.protocol === "file:"
+    ? "⚠ Abriste la página como archivo: nada se guarda en el servidor y puede borrarse al recargar. Inicia el servidor y abre http://127.0.0.1:8000."
+    : "⚠ No hay conexión con el servidor de CochaRuta: opiniones y favoritos quedan solo en este dispositivo y los avisos no funcionan.";
+  x.style.cssText = "position:absolute;right:6px;top:4px;background:none;border:0;color:#fff;font-size:1rem";
+  x.addEventListener("click", () => b.remove());
+  b.appendChild(x);
+  document.body.appendChild(b);
+}
 function apiLocal(url, options = {}) {
   const u = new URL(url, location.href), ruta = u.pathname, metodo = options.method || "GET";
   const leer = (k) => { try { return JSON.parse(localStorage.getItem(k)) || []; } catch (e) { return []; } };
   const guardar = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
   const cuerpo = options.body ? JSON.parse(options.body) : {};
   $("#nota-local").hidden = false;
+  avisoLocal();
   if (ruta === "/api/fares") return { fares: TARIFAS_BASE.map(([service, label, amount]) => ({ service, label, amount })) };
   if (ruta === "/api/opinions") {
     if (metodo === "POST") {
@@ -205,7 +221,7 @@ function apiLocal(url, options = {}) {
     if (metodo === "DELETE") { guardar("cocharuta-fav", l.filter((f) => String(f.id) !== u.searchParams.get("id"))); return { ok: true }; }
     return { favoritos: l };
   }
-  throw new Error("No se pudo completar la solicitud.");
+  throw new Error("Sin conexión con el servidor de CochaRuta: esto necesita el servidor activo y abrir la app desde http://127.0.0.1:8000 (no como archivo).");
 }
 
 // UUID alternativo para cuando crypto.randomUUID no existe (navegador viejo o http en red local); sin esto fallaban opiniones y favoritos.
@@ -229,6 +245,9 @@ let opiniones = [], estrellas = 0;
 // Llena el selector de rutas del formulario de opiniones.
 RUTAS.forEach((r) => $("#op-ruta").appendChild(new Option(`${r.tipo} ${r.id} · ${r.nombre}`, r.id)));
 $("#op-ruta").addEventListener("change", pintarOpiniones);
+// Recuerda la ruta elegida en el formulario de opiniones (al recargar vuelve a la misma, no a la primera de la lista).
+$("#op-ruta").addEventListener("change", () => { try { localStorage.setItem("cocharuta-op-ruta", $("#op-ruta").value); } catch (e) {} });
+try { const g = localStorage.getItem("cocharuta-op-ruta"); if (g && RUTAS.some((r) => r.id === g)) $("#op-ruta").value = g; } catch (e) {}
 
 // Crea las 5 estrellas clicables de la calificación.
 for (let i = 1; i <= 5; i++) {
@@ -501,6 +520,23 @@ $("#gps").addEventListener("click", () => {
 // ---------- Tiempo de llegada y tráfico ----------
 // Clave GRATIS de https://developer.tomtom.com (Traffic API y Routing API). Con la clave vacía no hay tráfico en vivo.
 const TOMTOM_KEY = "3uHLCEgWCEliCUOT9juBiUOtcYlmlizC";
+// TomTom no ofrece tráfico en vivo en Bolivia: con false la app no muestra tráfico falso. Cámbialo a true solo si usas un proveedor que sí tenga datos para Cochabamba.
+const TRAFICO_EN_VIVO = false;
+// Estimación del tráfico por hora del día (NO es tráfico real): factor por el que se multiplica el tiempo en el vehículo.
+// Son valores SUPUESTOS: ajústalos a lo que veas en las calles de Cochabamba. dias: 0 = domingo ... 6 = sábado.
+const PICOS = [
+  { dias: [1, 2, 3, 4, 5], de: "07:00", a: "09:00", f: 1.4, txt: "hora pico de la mañana" },
+  { dias: [1, 2, 3, 4, 5], de: "12:00", a: "14:00", f: 1.25, txt: "hora pico del mediodía" },
+  { dias: [1, 2, 3, 4, 5], de: "17:00", a: "19:30", f: 1.5, txt: "hora pico de la tarde" },
+  { dias: [6], de: "10:00", a: "13:00", f: 1.2, txt: "movimiento del sábado" },
+];
+// Devuelve { f: factor, nivel, txt } para este momento según PICOS.
+function estHora() {
+  const d = new Date(), m = d.getHours() * 60 + d.getMinutes();
+  const p = PICOS.find((x) => x.dias.includes(d.getDay()) && m >= aMin(x.de) && m < aMin(x.a));
+  const f = p ? p.f : 1;
+  return { f, nivel: f >= 1.4 ? "Pesado" : f >= 1.2 ? "Moderado" : "Normal", txt: p ? p.txt : "fuera de hora pico" };
+}
 // Velocidad promedio estimada (km/h) de cada tipo de transporte en la ciudad.
 const VEL = { Micro: 16, Trufi: 18, Taxitrufi: 18, Minibús: 20, Tren: 30 };
 // miPos = última posición GPS conocida.
@@ -522,6 +558,7 @@ function probarTrafico() {
 let capaTrafico = null;
 mapa.createPane("trafico").style.zIndex = 250; // capa propia: el modo oscuro no le cambia los colores
 $("#trafico").addEventListener("click", () => {
+  if (!TRAFICO_EN_VIVO) { alert("TomTom no tiene tráfico en vivo en Bolivia, por eso no se ven líneas de tráfico. Mientras tanto usa la pestaña ⚠ Avisos para reportar tráfico pesado, bloqueos o accidentes: aparecen en el mapa y en el tiempo estimado."); return; }
   if (!TOMTOM_KEY) { alert("Para ver el tráfico en vivo pega tu clave gratuita de TomTom en TOMTOM_KEY, al inicio del bloque “Tiempo de llegada y tráfico” de script.js."); return; }
   if (capaTrafico) { mapa.removeLayer(capaTrafico); capaTrafico = null; $("#trafico").style.opacity = ""; return; }
   capaTrafico = L.tileLayer(`https://api.tomtom.com/traffic/map/4/tile/flow/relative/{z}/{x}/{y}.png?key=${TOMTOM_KEY}`, { maxZoom: 19, opacity: 0.85, pane: "trafico" }).addTo(mapa);
@@ -578,17 +615,17 @@ async function planearViaje(i, ll) {
   const auto = await tiempoAuto(o, ll);
   await Promise.all([cargarReportes(), cargarHorarios()]);
   if (lugar !== i) return;
-  const factor = auto && auto.demora != null ? 1 + auto.demora / Math.max(auto.seg - auto.demora, 60) : 1;
-  const niv = !auto || auto.demora == null ? "Sin datos" : factor < 1.1 ? "Fluido" : factor < 1.3 ? "Moderado" : "Pesado";
+  const factor = TRAFICO_EN_VIVO && auto && auto.demora != null ? 1 + auto.demora / Math.max(auto.seg - auto.demora, 60) : estHora().f;
+  const niv = !TRAFICO_EN_VIVO || !auto || auto.demora == null ? estHora().nivel : factor < 1.1 ? "Fluido" : factor < 1.3 ? "Moderado" : "Pesado";
   const ride = (p.viaje * 1.3 / 1000) / VEL[p.r.tipo] * 60 * factor;
   const tr = horarioTren(p.r), av = avisosRuta(p.r);
   const total = Math.round((p.dO + p.dD) / 80 + (tr ? tr.espera : 5) + ride + av.extra);
   const hora = new Date(Date.now() + total * 60000).toLocaleTimeString("es-BO", { hour: "2-digit", minute: "2-digit" });
   const m = (x) => (x >= 1000 ? (x / 1000).toFixed(1).replace(".", ",") + " km" : Math.round(x) + " m");
-  poner(`<div class="stats"><div><b>${total} min</b><small>Tiempo total</small></div><div><b>${hora}</b><small>Llegada aprox.</small></div><div><b>${niv}</b><small>Tráfico</small></div></div>
+  poner(`<div class="stats"><div><b>${total} min</b><small>Tiempo total</small></div><div><b>${hora}</b><small>Llegada aprox.</small></div><div><b>${niv}</b><small>Tráfico${TRAFICO_EN_VIVO && auto ? "" : " (est.)"}</small></div></div>
     <p class="nota">🚶 ${m(p.dO)} hasta la parada · ⏱ espera ~${tr ? tr.espera : 5} min · ${ICONO[p.r.tipo]} ${Math.round(ride)} min en ${p.r.tipo} ${p.r.id} · 🚶 ${m(p.dD)} hasta tu destino</p>
     ${auto ? `<p class="nota">🚗 En auto: ${Math.round(auto.seg / 60)} min · ${m(auto.m)}</p>` : ""}
-    ${niv === "Sin datos" ? '<p class="nota">Tiempos estimados sin tráfico en vivo (agrega tu clave de TomTom para activarlo).</p>' : ""}
+    ${!TRAFICO_EN_VIVO || !auto ? `<p class="nota">Sin datos de tráfico en vivo para Cochabamba: el tráfico mostrado es una estimación por hora del día (${estHora().txt}), no tráfico real. Los avisos de la comunidad sí se suman.</p>` : ""}
     ${av.html}
     <button class="sec" id="iniciar">▶ Iniciar viaje y avisarme al bajar</button><p id="seguir" class="nota" hidden></p>`);
   $("#iniciar").addEventListener("click", () => seguir(p));
@@ -654,7 +691,7 @@ function horarioTren(r) {
 
 // ---------- Reportes de la comunidad ----------
 // TIPOS = emoji y nombre de cada tipo de reporte; reportes = avisos activos del servidor; capaRep = sus marcadores en el mapa.
-const TIPOS = { bloqueo: ["🚧", "Bloqueo"], accidente: ["🚨", "Accidente"], desvio: ["↪️", "Desvío"], lleno: ["👥", "Micro lleno"], retraso: ["⏳", "Retraso"] };
+const TIPOS = { bloqueo: ["🚧", "Bloqueo"], accidente: ["🚨", "Accidente"], desvio: ["↪️", "Desvío"], lleno: ["👥", "Micro lleno"], retraso: ["🚗", "Tráfico pesado"] };
 let reportes = [];
 const capaRep = L.layerGroup().addTo(mapa);
 // Llena los selectores del formulario de avisos.
@@ -762,17 +799,17 @@ async function infoRuta(r) {
   if (sel !== r) return;
   if (!d || d.error || !d.summary) { poner(`<p class="nota">No se pudo obtener el tráfico${d && d.error ? " (TomTom respondió " + d.error + (d.error === 403 ? ": revisa que tu clave tenga activada la Routing API o que no superaste el límite diario" : "") + ")" : ". Revisa tu internet"}.</p>`); return; }
   // Pinta cada tramo entre paradas con el color de su tráfico: verde fluido, amarillo moderado, rojo pesado.
-  d.legs.forEach((g) => {
+  if (TRAFICO_EN_VIVO) d.legs.forEach((g) => {
     const dl = g.summary.trafficDelayInSeconds || 0, f = 1 + dl / Math.max(g.summary.travelTimeInSeconds - dl, 30);
     L.polyline(g.points.map((q) => [q.latitude, q.longitude]), { color: f < 1.1 ? "#2e7d32" : f < 1.3 ? "#f9a825" : "#c62828", weight: 5 }).addTo(capa);
   });
-  const s = d.summary, delay = s.trafficDelayInSeconds || 0, f = 1 + delay / Math.max(s.travelTimeInSeconds - delay, 60);
-  const niv = f < 1.1 ? "Fluido" : f < 1.3 ? "Moderado" : "Pesado";
+  const s = d.summary, delay = TRAFICO_EN_VIVO ? s.trafficDelayInSeconds || 0 : 0, f = TRAFICO_EN_VIVO ? 1 + delay / Math.max(s.travelTimeInSeconds - delay, 60) : estHora().f;
+  const niv = !TRAFICO_EN_VIVO ? estHora().nivel : f < 1.1 ? "Fluido" : f < 1.3 ? "Moderado" : "Pesado";
   const total = Math.round(ya / 80 + 5 + (s.lengthInMeters / 1000) / (VEL[r.tipo] || 16) * 60 * f);
   const hora = new Date(Date.now() + total * 60000).toLocaleTimeString("es-BO", { hour: "2-digit", minute: "2-digit" });
   const sinDatos = s.liveTrafficIncidentsTravelTimeInSeconds !== undefined && s.noTrafficTravelTimeInSeconds === s.liveTrafficIncidentsTravelTimeInSeconds && s.noTrafficTravelTimeInSeconds === s.historicTrafficTravelTimeInSeconds;
-  poner(`<div class="stats"><div><b>${niv}</b><small>Tráfico por delante</small></div><div><b>${total} min</b><small>Hasta el final</small></div><div><b>${hora}</b><small>Llegada aprox.</small></div></div>
-    <p class="nota">${fmt(s.lengthInMeters)} por delante · +${Math.round(delay / 60)} min por tráfico. En el mapa: verde fluido, amarillo moderado, rojo pesado.${o ? ` Incluye ${fmt(ya)} caminando hasta la parada más cercana y 5 min de espera.` : " Activa el GPS para contar desde tu posición."}${sinDatos ? " ⚠ TomTom parece no tener datos de tráfico en esta zona: el tiempo es sin tráfico." : ""}</p>`);
+  poner(`<div class="stats"><div><b>${niv}</b><small>Tráfico por delante${TRAFICO_EN_VIVO ? "" : " (est.)"}</small></div><div><b>${total} min</b><small>Hasta el final</small></div><div><b>${hora}</b><small>Llegada aprox.</small></div></div>
+    <p class="nota">${fmt(s.lengthInMeters)} por delante${TRAFICO_EN_VIVO ? ` · +${Math.round(delay / 60)} min por tráfico. En el mapa: verde fluido, amarillo moderado, rojo pesado.` : `. Sin datos de tráfico en vivo para Cochabamba: el tiempo incluye una estimación por hora del día (${estHora().txt}), no tráfico real.`}${o ? ` Incluye ${fmt(ya)} caminando hasta la parada más cercana y 5 min de espera.` : " Activa el GPS para contar desde tu posición."}${TRAFICO_EN_VIVO && sinDatos ? " ⚠ TomTom parece no tener datos de tráfico en esta zona: el tiempo es sin tráfico." : ""}</p>`);
 }
 
 // ---------- Modo oscuro / claro ----------
