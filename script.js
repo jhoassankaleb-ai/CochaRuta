@@ -499,7 +499,7 @@ $("#gps").addEventListener("click", () => {
 
 // ---------- Tiempo de llegada y tráfico ----------
 // Clave GRATIS de https://developer.tomtom.com (Traffic API y Routing API). Con la clave vacía no hay tráfico en vivo.
-const TOMTOM_KEY = "";
+const TOMTOM_KEY = "3uHLCEgWCEliCUOT9juBiUOtcYlmlizC";
 // Velocidad promedio estimada (km/h) de cada tipo de transporte en la ciudad.
 const VEL = { Micro: 16, Trufi: 18, Taxitrufi: 18, Minibús: 20, Tren: 30 };
 // miPos = última posición GPS conocida.
