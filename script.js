@@ -198,12 +198,24 @@ function avisoLocal() {
   b.appendChild(x);
   document.body.appendChild(b);
 }
+// Franja roja que avisa que NO hay conexión con el servidor (lo que se guarde queda solo en este navegador, no en la base de datos).
+function avisoSinServidor() {
+  if (document.getElementById("sin-servidor")) return;
+  const b = document.createElement("div");
+  b.id = "sin-servidor";
+  b.textContent = "⚠ Sin conexión con el servidor: lo que guardes NO llega a la base de datos. Abre la app en Chrome desde http://127.0.0.1:8000 con Iniciar CochaRuta.bat (y cierra DB Browser si lo tienes abierto).";
+  b.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:2000;background:#c62828;color:#fff;padding:6px 10px;font-size:.78rem;text-align:center";
+  document.body.appendChild(b);
+  const barra = document.querySelector(".barra");
+  if (barra) barra.style.top = "56px";
+}
 function apiLocal(url, options = {}) {
   const u = new URL(url, location.href), ruta = u.pathname, metodo = options.method || "GET";
   const leer = (k) => { try { return JSON.parse(localStorage.getItem(k)) || []; } catch (e) { return []; } };
   const guardar = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
   const cuerpo = options.body ? JSON.parse(options.body) : {};
   $("#nota-local").hidden = false;
+  avisoSinServidor();
   avisoLocal();
   if (ruta === "/api/fares") return { fares: TARIFAS_BASE.map(([service, label, amount]) => ({ service, label, amount })) };
   if (ruta === "/api/opinions") {

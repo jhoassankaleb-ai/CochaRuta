@@ -90,6 +90,13 @@ class Handler(BaseHTTPRequestHandler):
 
     # GET: /api/fares (tarifas), /api/opinions (opiniones de una ruta) y /api/favorites (favoritos); cualquier otra dirección entrega un archivo de la página.
     def do_GET(self):
+        try:
+            return self._get()
+        except sqlite3.OperationalError:
+            # Igual que en POST: avisa que la base está bloqueada.
+            return self.send_json(503, {"error": "La base de datos está bloqueada: guarda y cierra la base en DB Browser e intenta otra vez."})
+
+    def _get(self):
         parsed = urlsplit(self.path)
         # Devuelve todas las tarifas ordenadas.
         if parsed.path == "/api/fares":
@@ -187,6 +194,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(error.status, {"error": str(error)})
         except sqlite3.IntegrityError:
             return self.send_json(400, {"error": "Los datos no cumplen las reglas de la base de datos."})
+        except sqlite3.OperationalError:
+            # Base bloqueada (por ejemplo DB Browser con cambios sin guardar): responde un error claro en vez de cortar la conexión.
+            return self.send_json(503, {"error": "La base de datos está bloqueada: guarda y cierra la base en DB Browser e intenta otra vez."})
 
     # DELETE: borra un favorito, solo si pertenece al cliente que lo pide.
     def do_DELETE(self):
