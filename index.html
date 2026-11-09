@@ -18,7 +18,7 @@
 
   <!-- Barra superior flotante: logo, buscador de lugares y filtros por tipo de transporte. -->
   <header class="barra">
-    <div class="marca"><span class="logo">🚌</span><b>CochaRuta</b><button id="gps" class="ico">📍 Mi ubicación</button><button id="tema" class="ico" aria-label="Cambiar entre modo claro y oscuro">🌙</button></div>
+    <div class="marca"><span class="logo">🚌</span><b>CochaRuta</b><button id="gps" class="ico">📍 Mi ubicación</button><button id="trafico" class="ico" aria-label="Mostrar u ocultar el tráfico">🚦</button><button id="tema" class="ico" aria-label="Cambiar entre modo claro y oscuro">🌙</button></div>
     <!-- Buscador: cuadro de texto, botón Buscar y lista de sugerencias (la llena script.js). -->
     <div class="buscar">
       <input id="q" type="search" placeholder="¿A dónde vas? Busca un lugar" autocomplete="off" enterkeyhint="search" aria-label="Buscar un lugar" />
@@ -41,12 +41,11 @@
       <button class="tab" data-tab="tarifas">Tarifas</button>
       <button class="tab" data-tab="opiniones">Opiniones</button>
       <button class="tab" data-tab="favoritos">★ Favoritos</button>
+      <button class="tab" data-tab="avisos">⚠ Avisos</button>
     </nav>
 
     <!-- Pestaña Rutas: lista de rutas y, al elegir una, su detalle. -->
     <div id="p-rutas" class="panel">
-      <!-- Tarjeta del viaje: distancia, tiempo, caminata, tráfico y pasos (la arma script.js) -->
-      <div id="viaje" class="viaje" hidden></div>
       <div id="lista"></div>
       <div id="detalle" hidden></div>
     </div>
@@ -70,6 +69,16 @@
 
     <!-- Pestaña Favoritos: lista de lugares guardados. -->
     <div id="p-favoritos" class="panel" hidden></div>
+
+    <!-- Pestaña Avisos: formulario para reportar (bloqueo, accidente...) en tu ubicación y lista de avisos activos. -->
+    <div id="p-avisos" class="panel" hidden>
+      <label>Tipo <select id="av-tipo"></select></label>
+      <label>Línea (opcional) <select id="av-ruta"></select></label>
+      <input id="av-nota" placeholder="Detalle (opcional)" maxlength="140" />
+      <button id="av-enviar" class="primario">Reportar en mi ubicación</button>
+      <p class="nota">Los avisos duran 2 horas. Un aviso confirmado por otra persona suma demora al tiempo estimado.</p>
+      <div id="p-avisos-lista"></div>
+    </div>
   </section>
 
   <!-- Librería Leaflet; debe cargar antes que script.js. -->

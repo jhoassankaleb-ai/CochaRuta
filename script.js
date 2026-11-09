@@ -120,7 +120,7 @@ function volver() {
 }
 
 // Muestra el detalle de la ruta (distancia, paradas...) y la dibuja en el mapa. 'extra' es el lugar buscado, que se incluye al ajustar el zoom.
-async function elegir(r, extra) {
+async function elegir(r, extra, origen) {
   sel = r;
   const d = $("#detalle");
   $("#lista").hidden = true;
@@ -148,7 +148,7 @@ async function elegir(r, extra) {
   L.polyline(pts, { color: "#fff", weight: 9, opacity: 0.9 }).addTo(capa);
   L.polyline(pts, { color: r.c, weight: 5 }).addTo(capa);
   r.paradas.forEach((p) => L.marker([p[0], p[1]], { icon: L.divIcon({ className: "", html: `<div class="parada" style="--c:${r.c}"></div>`, iconSize: [12, 12], iconAnchor: [6, 6] }) }).bindTooltip(p[2] || "Parada").addTo(capa));
-  mapa.fitBounds(L.latLngBounds(extra ? pts.concat([[extra.lat, extra.lng]]) : pts), { paddingTopLeft: [30, 190], paddingBottomRight: [30, Math.round(innerHeight * 0.46)] });
+  mapa.fitBounds(L.latLngBounds(pts.concat([extra, origen].filter(Boolean).map((e) => [e.lat, e.lng]))), { paddingTopLeft: [30, 190], paddingBottomRight: [30, Math.round(innerHeight * 0.46)] });
 }
 
 // ---------- Mostrar / ocultar el panel ----------
@@ -163,10 +163,10 @@ $("#asa").addEventListener("click", () => {
 // Cambia de pestaña: marca la activa y muestra solo su panel.
 function tab(nombre) {
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("on", t.dataset.tab === nombre));
-  ["rutas", "tarifas", "opiniones", "favoritos"].forEach((n) => ($("#p-" + n).hidden = n !== nombre));
+  ["rutas", "tarifas", "opiniones", "favoritos", "avisos"].forEach((n) => ($("#p-" + n).hidden = n !== nombre));
 }
 // Al tocar una pestaña se activa; si es Opiniones, recarga las opiniones.
-document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => { tab(t.dataset.tab); if (t.dataset.tab === "opiniones") pintarOpiniones(); }));
+document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => { tab(t.dataset.tab); if (t.dataset.tab === "opiniones") pintarOpiniones(); if (t.dataset.tab === "avisos") cargarReportes(); }));
 
 // ---------- Persistencia en SQLite a través del servidor ----------
 // Ayuda para hablar con el servidor (server.py): hace la petición, lee el JSON y lanza un error si falla.
@@ -392,6 +392,7 @@ function ofrecerGuardar(i, ll) {
 
 // Va a un lugar: marca el punto en el mapa, muestra su tarjeta (distancia y botón de favorito) y dibuja la ruta más cercana.
 function ir(i, soloUbicacion) {
+  detener();
   lugar = i;
   clearTimeout(espera);
   if (ctl) ctl.abort();
@@ -412,11 +413,11 @@ function ir(i, soloUbicacion) {
   const dist = !m ? "" : m.d >= 1000 ? (m.d / 1000).toFixed(1).replace(".", ",") + " km" : Math.round(m.d) + " m";
   $("#l-m").textContent = m ? `Más cercana: ${m.r.tipo} ${m.r.id} · a ${dist} (aprox.)` : "Toca ☆ Guardar para ponerla en favoritos (por ejemplo, Mi casa).";
   $("#estrella").addEventListener("click", () => alternar(i));
-  $("#cerrar").addEventListener("click", () => { lugar = null; c.hidden = true; capaLugar.clearLayers(); $("#q").value = ""; volver(); });
+  $("#cerrar").addEventListener("click", () => { detener(); lugar = null; c.hidden = true; capaLugar.clearLayers(); $("#q").value = ""; volver(); });
   pintarFavs();
   // Cambia a la pestaña Rutas y dibuja la ruta más cercana incluyendo el lugar en el zoom.
   tab("rutas");
-  if (m) elegir(m.r, i);
+  if (m) { elegir(m.r, i); planearViaje(i, ll); }
   else { volver(); mapa.setView(ll, 16); }
 }
 
@@ -490,11 +491,231 @@ void cargarFavoritos().catch((e) => alert("No se pudieron cargar los favoritos: 
 $("#gps").addEventListener("click", () => {
   if (!navigator.geolocation) { alert("Tu navegador no permite usar el GPS."); return; }
   navigator.geolocation.getCurrentPosition(
-    (pos) => ir({ titulo: "Mi ubicación", detalle: "Detectada por GPS", lat: pos.coords.latitude, lng: pos.coords.longitude, gps: true }, true),
+    (pos) => { miPos = L.latLng(pos.coords.latitude, pos.coords.longitude); ir({ titulo: "Mi ubicación", detalle: "Detectada por GPS", lat: pos.coords.latitude, lng: pos.coords.longitude, gps: true }, true); },
     () => alert("No se pudo obtener tu ubicación. Activa el GPS y da permiso al navegador."),
     { enableHighAccuracy: true, timeout: 10000 }
   );
 });
+
+// ---------- Tiempo de llegada y tráfico ----------
+// Clave GRATIS de https://developer.tomtom.com (Traffic API y Routing API). Con la clave vacía no hay tráfico en vivo.
+const TOMTOM_KEY = "";
+// Velocidad promedio estimada (km/h) de cada tipo de transporte en la ciudad.
+const VEL = { Micro: 16, Trufi: 18, Taxitrufi: 18, Minibús: 20, Tren: 30 };
+// miPos = última posición GPS conocida.
+let miPos = null;
+// Pide tu posición al GPS (usa la última si falla); devuelve null si no hay ninguna.
+const posicion = () => new Promise((ok) => navigator.geolocation
+  ? navigator.geolocation.getCurrentPosition((p) => ok((miPos = L.latLng(p.coords.latitude, p.coords.longitude))), () => ok(miPos), { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 })
+  : ok(null));
+
+// Botón 🚦: muestra u oculta las capas de tráfico de TomTom sobre el mapa.
+let capaTrafico = null;
+$("#trafico").addEventListener("click", () => {
+  if (!TOMTOM_KEY) { alert("Para ver el tráfico en vivo pega tu clave gratuita de TomTom en TOMTOM_KEY, al inicio del bloque “Tiempo de llegada y tráfico” de script.js."); return; }
+  if (capaTrafico) { mapa.removeLayer(capaTrafico); capaTrafico = null; $("#trafico").style.opacity = ""; return; }
+  capaTrafico = L.tileLayer(`https://api.tomtom.com/traffic/map/4/tile/flow/relative0/{z}/{x}/{y}.png?key=${TOMTOM_KEY}`, { maxZoom: 19, opacity: 0.85 }).addTo(mapa);
+  $("#trafico").style.opacity = "1";
+  $("#trafico").style.outline = "2px solid #00695c";
+});
+
+// Tiempo en auto de A a B: con clave usa TomTom (incluye demora por tráfico); sin clave usa OSRM (sin tráfico).
+async function tiempoAuto(a, b) {
+  try {
+    if (TOMTOM_KEY) {
+      const d = await (await fetch(`https://api.tomtom.com/routing/1/calculateRoute/${a.lat},${a.lng}:${b.lat},${b.lng}/json?traffic=true&key=${TOMTOM_KEY}`)).json();
+      const s = d.routes[0].summary;
+      return { seg: s.travelTimeInSeconds, demora: s.trafficDelayInSeconds, m: s.lengthInMeters };
+    }
+    const d = await (await fetch(`https://router.project-osrm.org/route/v1/driving/${a.lng},${a.lat};${b.lng},${b.lat}?overview=false`)).json();
+    return { seg: d.routes[0].duration, demora: null, m: d.routes[0].distance };
+  } catch (e) { return null; }
+}
+
+// Elige la ruta que mejor sirve para ir de o (tu ubicación) a d (destino): la que minimiza lo que caminas hasta subir y desde que bajas.
+function planear(o, d) {
+  let mejor = null;
+  RUTAS.forEach((r) => {
+    const pts = [];
+    for (let i = 0; i < r.paradas.length - 1; i++) {
+      const a = r.paradas[i], b = r.paradas[i + 1];
+      for (let k = 0; k < 20; k++) pts.push(L.latLng(a[0] + (b[0] - a[0]) * k / 20, a[1] + (b[1] - a[1]) * k / 20));
+    }
+    const u = r.paradas[r.paradas.length - 1]; pts.push(L.latLng(u[0], u[1]));
+    let io = 0, id = 0;
+    pts.forEach((p, k) => { if (o.distanceTo(p) < o.distanceTo(pts[io])) io = k; if (d.distanceTo(p) < d.distanceTo(pts[id])) id = k; });
+    const dO = o.distanceTo(pts[io]), dD = d.distanceTo(pts[id]);
+    if (!mejor || dO + dD < mejor.dO + mejor.dD) {
+      const tramo = pts.slice(Math.min(io, id), Math.max(io, id) + 1);
+      mejor = { r, dO, dD, bajada: pts[id], viaje: tramo.reduce((s, p, k) => s + (k ? tramo[k - 1].distanceTo(p) : 0), 0) };
+    }
+  });
+  return mejor;
+}
+
+// Calcula y muestra, arriba del detalle de la ruta: tiempo total, hora de llegada, nivel de tráfico y comparación en auto.
+async function planearViaje(i, ll) {
+  const poner = (h) => { const v = $("#viaje"); if (v) v.remove(); const a = $("#detalle .atras"); if (a) a.insertAdjacentHTML("afterend", `<div id="viaje">${h}</div>`); };
+  poner('<p class="nota">Calculando tiempo de llegada…</p>');
+  const o = await posicion();
+  if (lugar !== i) return;
+  if (!o) { poner('<p class="nota">Activa el GPS y da permiso al navegador para ver el tiempo de llegada desde tu ubicación.</p>'); return; }
+  const p = planear(o, ll);
+  elegir(p.r, i, o);
+  yo = L.circleMarker(o, { radius: 8, color: "#fff", weight: 3, fillColor: "#1565c0", fillOpacity: 1 }).bindTooltip("Tú").addTo(capaLugar);
+  poner('<p class="nota">Calculando tiempo de llegada…</p>');
+  const auto = await tiempoAuto(o, ll);
+  await Promise.all([cargarReportes(), cargarHorarios()]);
+  if (lugar !== i) return;
+  const factor = auto && auto.demora != null ? 1 + auto.demora / Math.max(auto.seg - auto.demora, 60) : 1;
+  const niv = !auto || auto.demora == null ? "Sin datos" : factor < 1.1 ? "Fluido" : factor < 1.3 ? "Moderado" : "Pesado";
+  const ride = (p.viaje * 1.3 / 1000) / VEL[p.r.tipo] * 60 * factor;
+  const tr = horarioTren(p.r), av = avisosRuta(p.r);
+  const total = Math.round((p.dO + p.dD) / 80 + (tr ? tr.espera : 5) + ride + av.extra);
+  const hora = new Date(Date.now() + total * 60000).toLocaleTimeString("es-BO", { hour: "2-digit", minute: "2-digit" });
+  const m = (x) => (x >= 1000 ? (x / 1000).toFixed(1).replace(".", ",") + " km" : Math.round(x) + " m");
+  poner(`<div class="stats"><div><b>${total} min</b><small>Tiempo total</small></div><div><b>${hora}</b><small>Llegada aprox.</small></div><div><b>${niv}</b><small>Tráfico</small></div></div>
+    <p class="nota">🚶 ${m(p.dO)} hasta la parada · ⏱ espera ~${tr ? tr.espera : 5} min · ${ICONO[p.r.tipo]} ${Math.round(ride)} min en ${p.r.tipo} ${p.r.id} · 🚶 ${m(p.dD)} hasta tu destino</p>
+    ${auto ? `<p class="nota">🚗 En auto: ${Math.round(auto.seg / 60)} min · ${m(auto.m)}</p>` : ""}
+    ${niv === "Sin datos" ? '<p class="nota">Tiempos estimados sin tráfico en vivo (agrega tu clave de TomTom para activarlo).</p>' : ""}
+    ${tr ? tr.html : ""}${av.html}
+    <button class="sec" id="iniciar">▶ Iniciar viaje y avisarme al bajar</button><p id="seguir" class="nota" hidden></p>`);
+  $("#iniciar").addEventListener("click", () => seguir(p));
+}
+
+// ---------- Viaje en vivo y aviso de bajada ----------
+// yo = marcador azul "Tú"; vigia = id del seguimiento GPS; bloqueo = pantalla encendida; avisado = ya sonó la alerta.
+let yo = null, vigia = null, bloqueo = null, avisado = false;
+// Detiene el seguimiento GPS y suelta el bloqueo de pantalla.
+function detener() {
+  if (vigia !== null) navigator.geolocation.clearWatch(vigia);
+  vigia = null;
+  if (bloqueo) { bloqueo.release().catch(() => {}); bloqueo = null; }
+  const b = $("#iniciar"), t = $("#seguir");
+  if (b) b.textContent = "▶ Iniciar viaje y avisarme al bajar";
+  if (t) t.hidden = true;
+}
+// Botón "Iniciar viaje": sigue tu posición, mueve el punto azul y avisa (vibración + alerta) a menos de 250 m de donde bajas.
+async function seguir(p) {
+  if (vigia !== null) { detener(); return; }
+  if (!navigator.geolocation) { alert("Tu navegador no permite usar el GPS."); return; }
+  const b = $("#iniciar"), t = $("#seguir");
+  avisado = false;
+  b.textContent = "■ Detener viaje";
+  t.hidden = false; t.textContent = "Buscando tu posición…";
+  try { bloqueo = await navigator.wakeLock.request("screen"); } catch (e) { /* no todos los navegadores lo permiten */ }
+  L.marker(p.bajada, { icon: L.divIcon({ className: "", html: '<div class="favm">🔔</div>', iconSize: [22, 22], iconAnchor: [11, 11] }) }).bindTooltip("Baja aquí").addTo(capaLugar);
+  vigia = navigator.geolocation.watchPosition((pos) => {
+    const o = L.latLng(pos.coords.latitude, pos.coords.longitude), d = o.distanceTo(p.bajada);
+    miPos = o;
+    if (yo) yo.setLatLng(o);
+    if (!mapa.getBounds().contains(o)) mapa.panTo(o);
+    t.textContent = d < 250 ? `🔔 ¡Prepárate para bajar! Estás a ${Math.round(d)} m de tu parada.` : `Te faltan ${d >= 1000 ? (d / 1000).toFixed(1).replace(".", ",") + " km" : Math.round(d) + " m"} para bajar.`;
+    if (d < 250 && !avisado) {
+      avisado = true;
+      if (navigator.vibrate) navigator.vibrate([500, 200, 500, 200, 500]);
+      setTimeout(() => alert(`🔔 ¡Prepárate para bajar! Estás a ${Math.round(d)} m de tu parada.`), 150);
+    }
+  }, () => { t.textContent = "No se pudo seguir tu posición. Revisa el GPS y el permiso."; }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 });
+}
+
+// ---------- Horarios del tren ----------
+// horarios = filas de /api/schedules (ruta, dia, primero, ultimo, cada). Si el servidor no tiene datos, queda vacío.
+let horarios = [];
+async function cargarHorarios() {
+  if (horarios.length) return;
+  try { horarios = (await api("/api/schedules")).horarios; } catch (e) { horarios = []; }
+}
+// Convierte "HH:MM" a minutos desde la medianoche.
+const aMin = (h) => { const [a, b] = h.split(":"); return +a * 60 + +b; };
+// Para una ruta de tren devuelve la espera promedio (mitad de la frecuencia) y el texto del horario de hoy; null si no es tren.
+function horarioTren(r) {
+  if (r.tipo !== "Tren") return null;
+  const f = new Date(), dia = f.getDay() === 0 ? "domingo" : f.getDay() === 6 ? "sabado" : "semana";
+  const h = horarios.find((x) => x.ruta === r.id && x.dia === dia);
+  if (!h) return { espera: 5, html: '<p class="nota">Horario del tren aún no confirmado: se usa una espera de 5 min. Verifícalo con Mi Tren.</p>' };
+  const ahora = f.getHours() * 60 + f.getMinutes(), fuera = ahora < aMin(h.primero) || ahora > aMin(h.ultimo);
+  return { espera: Math.max(1, Math.round(h.cada / 2)), html: `<p class="nota">🚆 Hoy: ${h.primero}–${h.ultimo}, un tren cada ${h.cada} min.${fuera ? " ⚠ Ahora el tren está fuera de servicio." : ""}</p>` };
+}
+
+// ---------- Reportes de la comunidad ----------
+// TIPOS = emoji y nombre de cada tipo de reporte; reportes = avisos activos del servidor; capaRep = sus marcadores en el mapa.
+const TIPOS = { bloqueo: ["🚧", "Bloqueo"], accidente: ["🚨", "Accidente"], desvio: ["↪️", "Desvío"], lleno: ["👥", "Micro lleno"], retraso: ["⏳", "Retraso"] };
+let reportes = [];
+const capaRep = L.layerGroup().addTo(mapa);
+// Llena los selectores del formulario de avisos.
+Object.entries(TIPOS).forEach(([k, [ic, n]]) => $("#av-tipo").appendChild(new Option(`${ic} ${n}`, k)));
+$("#av-ruta").appendChild(new Option("Sin línea específica", ""));
+RUTAS.forEach((r) => $("#av-ruta").appendChild(new Option(`${r.tipo} ${r.id}`, r.id)));
+
+// Pide los avisos activos al servidor y los pinta (si no hay servidor, la lista queda vacía).
+async function cargarReportes() {
+  try { reportes = (await api("/api/reports")).reportes; } catch (e) { reportes = []; }
+  pintarReportes();
+}
+// Dibuja la lista de avisos (con botones de votar) y sus marcadores rojos en el mapa.
+function pintarReportes() {
+  const p = $("#p-avisos-lista");
+  p.innerHTML = "";
+  capaRep.clearLayers();
+  if (!reportes.length) p.appendChild(nodo("p", "nota", "No hay avisos activos en este momento."));
+  reportes.forEach((r) => {
+    const [ic, nom] = TIPOS[r.tipo] || ["⚠", r.tipo];
+    L.marker([r.lat, r.lng], { icon: L.divIcon({ className: "", html: `<div class="favm" style="background:#c62828">${ic}</div>`, iconSize: [22, 22], iconAnchor: [11, 11] }) })
+      .bindTooltip(`${nom} · hace ${r.min} min`).addTo(capaRep);
+    const d = nodo("div", "op"), t = nodo("b"), s = nodo("small"), n = nodo("div"), v = nodo("div");
+    t.textContent = `${ic} ${nom}${r.ruta ? " · " + r.ruta : ""}`;
+    s.textContent = ` hace ${r.min} min · ✔ ${r.si} · ✖ ${r.no}`;
+    n.textContent = r.nota;
+    const si = nodo("button", "sec", "✔ Sigue ahí"), no = nodo("button", "sec", "✖ Ya no está");
+    si.addEventListener("click", () => votar(r.id, true));
+    no.addEventListener("click", () => votar(r.id, false));
+    v.append(si, " ", no);
+    d.append(t, s, n, v);
+    p.appendChild(d);
+  });
+}
+// Envía tu voto sobre un aviso y recarga la lista.
+async function votar(id, vigente) {
+  try {
+    await api("/api/reports/vote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_id: CLIENTE_ID, id, vigente }) });
+    await cargarReportes();
+  } catch (e) { alert("No se pudo registrar tu voto: " + e.message); }
+}
+// Botón "Reportar": toma tu GPS y envía el aviso al servidor.
+$("#av-enviar").addEventListener("click", async () => {
+  const pos = await posicion();
+  if (!pos) { alert("Activa el GPS y da permiso al navegador para reportar en tu ubicación."); return; }
+  const b = $("#av-enviar");
+  b.disabled = true;
+  try {
+    await api("/api/reports", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_id: CLIENTE_ID, tipo: $("#av-tipo").value, ruta: $("#av-ruta").value, nota: $("#av-nota").value.trim(), lat: pos.lat, lng: pos.lng }) });
+    $("#av-nota").value = "";
+    await cargarReportes();
+  } catch (e) { alert("No se pudo enviar el reporte: " + e.message); }
+  finally { b.disabled = false; }
+});
+// Distancia mínima (m) entre un punto y el recorrido de una ruta.
+function distRuta(r, ll) {
+  let m = Infinity;
+  for (let i = 0; i < r.paradas.length - 1; i++) {
+    const a = r.paradas[i], b = r.paradas[i + 1];
+    for (let k = 0; k <= 20; k++) m = Math.min(m, ll.distanceTo([a[0] + (b[0] - a[0]) * k / 20, a[1] + (b[1] - a[1]) * k / 20]));
+  }
+  return m;
+}
+// Avisos que afectan a una ruta (de esa línea o a menos de 300 m). Si otra persona los confirmó, suman demora al viaje.
+function avisosRuta(r) {
+  let extra = 0, html = "";
+  reportes.forEach((x) => {
+    if (x.ruta !== r.id && distRuta(r, L.latLng(x.lat, x.lng)) > 300) return;
+    const conf = x.si >= 1, [ic, nom] = TIPOS[x.tipo] || ["⚠", x.tipo];
+    if (conf) extra += { bloqueo: 10, accidente: 10, desvio: 5, retraso: 5 }[x.tipo] || 0;
+    html += `<p class="nota">${ic} ${nom} reportado hace ${x.min} min ${x.ruta === r.id ? "en esta línea" : "cerca de la ruta"} (${conf ? "confirmado" : "sin confirmar"}).</p>`;
+  });
+  return { extra, html };
+}
+void cargarReportes();
 
 // ---------- Modo oscuro / claro ----------
 // Activa o quita la clase 'oscuro' del body (los estilos están en style.css) y recuerda la elección.

@@ -76,3 +76,37 @@ INSERT OR IGNORE INTO fares (service, label, amount, sort_order) VALUES
     ('tren', 'Línea Verde (a Quillacollo)', 4.00, 2),
     ('tren', 'Preferencial', 2.00, 3),
     ('tren', 'Estudiantil', 1.00, 4);
+
+-- Horarios del tren (solo trenes): primera y última salida (HH:MM) y minutos entre trenes, por tipo de día (semana, sabado, domingo).
+-- Está vacía a propósito: llénala con los horarios OFICIALES de "Mi Tren". Ejemplo con valores inventados (no los uses tal cual):
+--   INSERT OR REPLACE INTO train_schedules (route_id, day_type, first_departure, last_departure, headway_min) VALUES ('Verde', 'semana', '06:00', '20:00', 30);
+CREATE TABLE IF NOT EXISTS train_schedules (
+    id INTEGER PRIMARY KEY,
+    route_id TEXT NOT NULL REFERENCES routes(id),
+    day_type TEXT NOT NULL CHECK (day_type IN ('semana', 'sabado', 'domingo')),
+    first_departure TEXT NOT NULL CHECK (first_departure GLOB '[0-2][0-9]:[0-5][0-9]'),
+    last_departure TEXT NOT NULL CHECK (last_departure GLOB '[0-2][0-9]:[0-5][0-9]'),
+    headway_min INTEGER NOT NULL CHECK (headway_min BETWEEN 1 AND 240),
+    UNIQUE (route_id, day_type)
+);
+
+-- Reportes de la comunidad: tipo, ruta opcional, nota corta, ubicación y fecha; el servidor solo muestra los de las últimas 2 horas.
+CREATE TABLE IF NOT EXISTS reports (
+    id INTEGER PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('bloqueo', 'accidente', 'desvio', 'lleno', 'retraso')),
+    route_id TEXT REFERENCES routes(id),
+    note TEXT NOT NULL DEFAULT '' CHECK (length(note) <= 140),
+    latitude REAL NOT NULL CHECK (latitude BETWEEN -90 AND 90),
+    longitude REAL NOT NULL CHECK (longitude BETWEEN -180 AND 180),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS reports_created ON reports(created_at DESC);
+
+-- Votos sobre un reporte: cada navegador vota una vez ("sigue ahí" = 1, "ya no está" = 0).
+CREATE TABLE IF NOT EXISTS report_votes (
+    report_id INTEGER NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+    client_id TEXT NOT NULL,
+    still_there INTEGER NOT NULL CHECK (still_there IN (0, 1)),
+    PRIMARY KEY (report_id, client_id)
+);

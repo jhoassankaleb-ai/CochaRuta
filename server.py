@@ -19,6 +19,9 @@ DATABASE = ROOT / "cocharuta.db"
 STATIC_FILES = {"index.html", "script.js", "style.css", "logo.png.jpg", "manifest.json", "sw.js", "icon-192.png", "icon-512.png"}
 # Tamaño máximo, en bytes, de lo que se acepta en una petición POST.
 MAX_BODY_SIZE = 16_384
+# Tipos de reporte permitidos y zona (sur, norte, oeste, este) donde se aceptan reportes.
+REPORT_KINDS = {"bloqueo", "accidente", "desvio", "lleno", "retraso"}
+REPORT_ZONE = (-17.55, -17.25, -66.40, -65.95)
 
 
 # Abre una conexión a SQLite que guarda los cambios al terminar y siempre se cierra; activa las claves foráneas.
@@ -134,6 +137,34 @@ class Handler(BaseHTTPRequestHandler):
             ]
             return self.send_json(200, {"favoritos": favorites})
 
+        # Devuelve los horarios del tren (primera y última salida y frecuencia por tipo de día).
+        if parsed.path == "/api/schedules":
+            with connect() as connection:
+                rows = connection.execute(
+                    "SELECT route_id, day_type, first_departure, last_departure, headway_min FROM train_schedules"
+                ).fetchall()
+            return self.send_json(200, {"horarios": [
+                {"ruta": r["route_id"], "dia": r["day_type"], "primero": r["first_departure"],
+                 "ultimo": r["last_departure"], "cada": r["headway_min"]} for r in rows]})
+
+        # Devuelve los reportes de las últimas 2 horas con sus votos; oculta los que 2 o más personas dicen que ya no están.
+        if parsed.path == "/api/reports":
+            with connect() as connection:
+                rows = connection.execute(
+                    """SELECT r.id, r.kind, r.route_id, r.note, r.latitude, r.longitude,
+                              CAST((julianday('now') - julianday(r.created_at)) * 1440 AS INTEGER) AS minutes,
+                              (SELECT COUNT(*) FROM report_votes v WHERE v.report_id = r.id AND v.still_there = 1) AS yes,
+                              (SELECT COUNT(*) FROM report_votes v WHERE v.report_id = r.id AND v.still_there = 0) AS no
+                       FROM reports r WHERE r.created_at >= datetime('now', '-2 hours')
+                       ORDER BY r.id DESC LIMIT 100"""
+                ).fetchall()
+            reports = [
+                {"id": r["id"], "tipo": r["kind"], "ruta": r["route_id"], "nota": r["note"],
+                 "lat": r["latitude"], "lng": r["longitude"], "min": r["minutes"], "si": r["yes"], "no": r["no"]}
+                for r in rows if not (r["no"] >= 2 and r["no"] > r["yes"])
+            ]
+            return self.send_json(200, {"reportes": reports})
+
         # Si empieza con /api/ pero no existe responde 404; si no, entrega un archivo estático.
         if parsed.path.startswith("/api/"):
             return self.send_json(404, {"error": "Recurso API no encontrado."})
@@ -146,6 +177,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.create_opinion()
             if urlsplit(self.path).path == "/api/favorites":
                 return self.create_favorite()
+            if urlsplit(self.path).path == "/api/reports":
+                return self.create_report()
+            if urlsplit(self.path).path == "/api/reports/vote":
+                return self.vote_report()
             return self.send_json(404, {"error": "Recurso API no encontrado."})
         except RequestError as error:
             return self.send_json(error.status, {"error": str(error)})
@@ -220,6 +255,55 @@ class Handler(BaseHTTPRequestHandler):
                 (client_id, title, detail, latitude, longitude),
             )
         return self.send_json(201, {"ok": True})
+
+    # Valida y guarda un reporte: tipo permitido, ubicación dentro de Cochabamba, nota de hasta 140 caracteres y máximo 5 reportes por hora por navegador.
+    def create_report(self):
+        data = self.read_json()
+        client_id = self.client_id(data.get("client_id"))
+        kind, route_id, note = data.get("tipo"), data.get("ruta") or None, data.get("nota", "")
+        latitude, longitude = data.get("lat"), data.get("lng")
+        if kind not in REPORT_KINDS:
+            raise RequestError(400, "Tipo de reporte inválido.")
+        if (route_id is not None and not isinstance(route_id, str)) or not isinstance(note, str) or len(note.strip()) > 140:
+            raise RequestError(400, "La ruta o la nota no son válidas (la nota admite hasta 140 caracteres).")
+        if (type(latitude) not in (int, float) or type(longitude) not in (int, float)
+                or not math.isfinite(latitude) or not math.isfinite(longitude)
+                or not REPORT_ZONE[0] <= latitude <= REPORT_ZONE[1] or not REPORT_ZONE[2] <= longitude <= REPORT_ZONE[3]):
+            raise RequestError(400, "Solo se aceptan reportes dentro de Cochabamba.")
+        with connect() as connection:
+            if route_id and not connection.execute("SELECT 1 FROM routes WHERE id = ?", (route_id,)).fetchone():
+                raise RequestError(400, "La ruta seleccionada no existe.")
+            recent = connection.execute(
+                "SELECT COUNT(*) FROM reports WHERE client_id = ? AND created_at >= datetime('now', '-1 hour')",
+                (client_id,),
+            ).fetchone()[0]
+            if recent >= 5:
+                raise RequestError(429, "Enviaste muchos reportes seguidos. Intenta de nuevo más tarde.")
+            connection.execute(
+                "INSERT INTO reports (client_id, kind, route_id, note, latitude, longitude) VALUES (?, ?, ?, ?, ?, ?)",
+                (client_id, kind, route_id, note.strip(), latitude, longitude),
+            )
+        return self.send_json(201, {"ok": True})
+
+    # Registra el voto "sigue ahí" / "ya no está" sobre un reporte; no se puede votar el propio y cada navegador vota una sola vez (puede cambiarlo).
+    def vote_report(self):
+        data = self.read_json()
+        client_id = self.client_id(data.get("client_id"))
+        report_id, still_there = data.get("id"), data.get("vigente")
+        if type(report_id) is not int or type(still_there) is not bool:
+            raise RequestError(400, "Voto inválido.")
+        with connect() as connection:
+            row = connection.execute("SELECT client_id FROM reports WHERE id = ?", (report_id,)).fetchone()
+            if not row:
+                raise RequestError(404, "El reporte ya no existe.")
+            if row["client_id"] == client_id:
+                raise RequestError(400, "No puedes votar tu propio reporte.")
+            connection.execute(
+                """INSERT INTO report_votes (report_id, client_id, still_there) VALUES (?, ?, ?)
+                   ON CONFLICT(report_id, client_id) DO UPDATE SET still_there = excluded.still_there""",
+                (report_id, client_id, int(still_there)),
+            )
+        return self.send_json(200, {"ok": True})
 
     # Entrega index.html, script.js o style.css; rechaza cualquier otro archivo.
     def serve_static(self, requested_path):
